@@ -2,23 +2,27 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
+const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const FRONTEND_URL = process.env.FRONTEND_URL || '*';
+
+// Trust proxy (fix for Railway)
+app.set('trust proxy', 1);
 
 // Middleware
 app.use(cors({ origin: '*', credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-app.use(express.static(path.join(__dirname, '../frontend')));
 
 // Rate limiting
 app.use('/api/', rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 100,
-    message: { error: 'Trop de requêtes' }
+    message: { error: 'Trop de requêtes' },
+    standardHeaders: true,
+    legacyHeaders: false
 }));
 
 // Logging
@@ -26,6 +30,33 @@ app.use((req, res, next) => {
     console.log(`${new Date().toISOString()} ${req.method} ${req.path}`);
     next();
 });
+
+// Auto-initialize database if not exists
+const DB_PATH = path.join(__dirname, 'database', 'foodmatchs.db');
+if (!fs.existsSync(DB_PATH)) {
+    console.log('🍽️  Database not found, initializing...');
+    try {
+        require('./database/init');
+        console.log('✅ Database initialized');
+        
+        // Run seeds
+        require('./database/seed-meals');
+        console.log('✅ Questions and starters seeded');
+        
+        require('./database/seed-meals-mains');
+        console.log('✅ Main dishes seeded');
+        
+        require('./database/seed-meals-desserts');
+        console.log('✅ Desserts seeded');
+        
+        require('./database/seed-meals-extras');
+        console.log('✅ Cheeses and wines seeded');
+        
+        console.log('🎉 Database setup complete!');
+    } catch (error) {
+        console.error('❌ Database init error:', error.message);
+    }
+}
 
 // Routes
 app.use('/api/auth', require('./routes/auth'));
@@ -46,7 +77,7 @@ app.get('/api/health', (req, res) => {
 // Stats
 app.get('/api/stats', (req, res) => {
     const Database = require('better-sqlite3');
-    const db = new Database(path.join(__dirname, 'database', 'foodmatchs.db'));
+    const db = new Database(DB_PATH);
     try {
         const stats = {
             starters: db.prepare('SELECT COUNT(*) as c FROM meals WHERE type=?').get('starter').c,
@@ -65,11 +96,6 @@ app.get('/api/stats', (req, res) => {
     }
 });
 
-// SPA fallback
-app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '../frontend', 'index.html'));
-});
-
 // Error handler
 app.use((err, req, res, next) => {
     console.error(err);
@@ -77,7 +103,7 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`🍽️  FoodMatchs API on http://localhost:${PORT}`);
+    console.log(`🍽️  FoodMatchs API on port ${PORT}`);
 });
 
 module.exports = app;
